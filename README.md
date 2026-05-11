@@ -6,7 +6,7 @@
      ██║  ██║╚██████╔╝╚██████╔╝██████╔╝╚█████╔╝██║███████╗
      ╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ╚═════╝  ╚════╝ ╚═╝╚══════╝
 ```
-<div align="center">
+<div align="center"> 
 ![Python](https://img.shields.io/badge/Python-3.8+-gold?style=for-the-badge&logo=python&logoColor=black)
 ![Cloud](https://img.shields.io/badge/Cloud-AWS%20·%20Azure%20·%20GCP%20·%20OCI-orange?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-MIT-red?style=for-the-badge)
