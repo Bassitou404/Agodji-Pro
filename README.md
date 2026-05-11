@@ -6,13 +6,7 @@
      ██║  ██║╚██████╔╝╚██████╔╝██████╔╝╚█████╔╝██║███████╗
      ╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ╚═════╝  ╚════╝ ╚═╝╚══════╝
 ```
-<div align="center"> 
-![Python](https://img.shields.io/badge/Python-3.8+-gold?style=for-the-badge&logo=python&logoColor=black)
-![Cloud](https://img.shields.io/badge/Cloud-AWS%20·%20Azure%20·%20GCP%20·%20OCI-orange?style=for-the-badge)
-![License](https://img.shields.io/badge/License-MIT-red?style=for-the-badge)
-![Author](https://img.shields.io/badge/Author-@T3RRIFI3R-crimson?style=for-the-badge)
-Scanner d'énumération cloud ultra-puissant inspiré des guerrières Agodjié du Dahomey.  
-AWS · Azure · GCP · OCI — Ports · Metadata · SSL · DNS · Buckets · Subdomains
+
 </div>
 ---
 Présentation
