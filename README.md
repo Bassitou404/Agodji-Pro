@@ -9,19 +9,10 @@
 
 </div>
 ---
-Présentation
-Agodjié est un scanner d'infrastructure cloud offensif, conçu pour les pentesters et red teamers qui travaillent sur des environnements cloud. Il permet une énumération complète et rapide de la surface d'attaque cloud : ports exposés, endpoints IMDS, buckets mal configurés, certificats SSL, enregistrements DNS et sous-domaines.
-> Nommé en hommage aux **Agodjié** (Mino), l'armée de guerrières d'élite du Royaume de Dahomey — légendaires pour leur discipline, leur rapidité et leur précision.
+
 ---
 Fonctionnalités
-Module	Description
-`ports`	Scan de 60+ ports cloud spécifiques (Kubernetes, Docker, Redis, Kafka, etcd, etc.) avec banner grabbing
-`metadata`	Détection des endpoints IMDS cloud (AWS IMDSv1/v2, Azure, GCP, OCI, DigitalOcean...)
-`ssl`	Inspection des certificats TLS : SANs, cipher suites, protocoles, expiration
-`headers`	Fingerprinting via headers HTTP : détection provider, misconfiguration CORS, CSP
-`dns`	Énumération DNS : A, AAAA, MX, TXT, NS, CNAME, SOA — détection AWS SES, M365, GSuite
-`subdomains`	Bruteforce de sous-domaines orienté cloud (api, admin, k8s, jenkins, vault, etc.)
-`buckets`	Énumération S3, GCS, Azure Blob — détection buckets publics / privés accessibles
+
 ---
 Installation
 ```bash
