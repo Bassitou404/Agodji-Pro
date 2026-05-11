@@ -1,1 +1,653 @@
+#!/usr/bin/env python3
+# ═══════════════════════════════════════════════════════════════════════════════
+#   AGODJIÉ — Cloud Enumeration Scanner
+#   Author  : @T3RRIFI3R
+#   Version : 1.0.0
+#   License : MIT
+#   Purpose : Cloud infrastructure enumeration (AWS · Azure · GCP · OCI)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import argparse
+import concurrent.futures
+import ipaddress
+import json
+import os
+import random
+import re
+import socket
+import ssl
+import subprocess
+import sys
+import time
+import urllib.request
+import urllib.error
+from datetime import datetime
+from typing import Optional
+
+# ─── Dépendances optionnelles ──────────────────────────────────────────────────
+try:
+    import boto3
+    HAS_BOTO3 = True
+except ImportError:
+    HAS_BOTO3 = False
+
+try:
+    from azure.identity import DefaultAzureCredential
+    HAS_AZURE = True
+except ImportError:
+    HAS_AZURE = False
+
+# ─── Palette de couleurs ANSI ─────────────────────────────────────────────────
+class C:
+    RESET   = "\033[0m"
+    BOLD    = "\033[1m"
+    DIM     = "\033[2m"
+    # Couleurs principales
+    RED     = "\033[38;5;196m"
+    ORANGE  = "\033[38;5;208m"
+    GOLD    = "\033[38;5;220m"
+    GREEN   = "\033[38;5;82m"
+    TEAL    = "\033[38;5;45m"
+    BLUE    = "\033[38;5;33m"
+    PURPLE  = "\033[38;5;141m"
+    GRAY    = "\033[38;5;240m"
+    WHITE   = "\033[38;5;255m"
+    SILVER  = "\033[38;5;250m"
+    # Backgrounds
+    BG_DARK = "\033[48;5;234m"
+    BG_RED  = "\033[48;5;52m"
+
+# ─── Symboles UI ──────────────────────────────────────────────────────────────
+class S:
+    OK      = f"{C.GREEN}[✓]{C.RESET}"
+    WARN    = f"{C.GOLD}[!]{C.RESET}"
+    ERR     = f"{C.RED}[✗]{C.RESET}"
+    INFO    = f"{C.TEAL}[≫]{C.RESET}"
+    SCAN    = f"{C.ORANGE}[⬡]{C.RESET}"
+    FIND    = f"{C.PURPLE}[◈]{C.RESET}"
+    ARROW   = f"{C.GOLD}→{C.RESET}"
+    BULLET  = f"{C.GRAY}·{C.RESET}"
+    SEP     = f"{C.GRAY}{'─' * 70}{C.RESET}"
+    SEP2    = f"{C.ORANGE}{'═' * 70}{C.RESET}"
+
+# ─── Banner ASCII ─────────────────────────────────────────────────────────────
+BANNER = f"""
+{C.GOLD}
+      █████╗  ██████╗  ██████╗ ██████╗      ██╗██╗███████╗
+     ██╔══██╗██╔════╝ ██╔═══██╗██╔══██╗     ██║██║██╔════╝
+     ███████║██║  ███╗██║   ██║██║  ██║     ██║██║█████╗
+     ██╔══██║██║   ██║██║   ██║██║  ██║██   ██║██║██╔══╝
+     ██║  ██║╚██████╔╝╚██████╔╝██████╔╝╚█████╔╝██║███████╗
+     ╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ╚═════╝  ╚════╝ ╚═╝╚══════╝
+{C.RESET}{C.ORANGE}
+          ╔══ Cloud Enumeration Scanner ═══════════════════╗
+          ║  AWS · Azure · GCP · OCI  │  by @T3RRIFI3R     ║
+          ║  Version 1.0.0            │  github.com/Bassitou404 ║
+          ╚════════════════════════════════════════════════╝{C.RESET}
+"""
+
+# ─── Ports cloud connus ────────────────────────────────────────────────────────
+CLOUD_PORTS = {
+    # AWS
+    80:    "HTTP",
+    443:   "HTTPS",
+    22:    "SSH",
+    3389:  "RDP",
+    8080:  "HTTP-ALT",
+    8443:  "HTTPS-ALT",
+    9200:  "Elasticsearch",
+    5601:  "Kibana",
+    6379:  "Redis",
+    27017: "MongoDB",
+    5432:  "PostgreSQL",
+    3306:  "MySQL",
+    1433:  "MSSQL",
+    2049:  "NFS",
+    111:   "RPC",
+    2375:  "Docker (non-TLS)",
+    2376:  "Docker (TLS)",
+    6443:  "Kubernetes API",
+    8001:  "Kubernetes Proxy",
+    10250: "Kubelet API",
+    10255: "Kubelet Read-Only",
+    4243:  "Docker Alt",
+    9090:  "Prometheus",
+    3000:  "Grafana",
+    9000:  "MinIO / SonarQube",
+    8888:  "Jupyter Notebook",
+    4444:  "Metasploit",
+    7000:  "Cassandra",
+    7001:  "Cassandra TLS",
+    5000:  "Flask / Docker Registry",
+    4567:  "Sinatra",
+    8500:  "Consul",
+    8300:  "Consul Server",
+    2181:  "ZooKeeper",
+    9092:  "Kafka",
+    11211: "Memcached",
+    6380:  "Redis TLS",
+    389:   "LDAP",
+    636:   "LDAPS",
+    88:    "Kerberos",
+    464:   "Kerberos Change/Set",
+    135:   "WMI / DCOM",
+    445:   "SMB",
+    139:   "NetBIOS",
+    53:    "DNS",
+    123:   "NTP",
+    161:   "SNMP",
+    162:   "SNMP Trap",
+    25:    "SMTP",
+    587:   "SMTP TLS",
+    993:   "IMAPS",
+    995:   "POP3S",
+    514:   "Syslog",
+    2379:  "etcd",
+    2380:  "etcd Peer",
+    8472:  "VXLAN (Flannel)",
+    179:   "BGP",
+    500:   "IKE / IPSec",
+    4500:  "IPSec NAT-T",
+    4789:  "VXLAN",
+    8008:  "HTTP Alt",
+    8009:  "AJP Tomcat",
+}
+
+# ─── Metadata endpoints cloud ─────────────────────────────────────────────────
+METADATA_ENDPOINTS = {
+    "AWS IMDSv1": "http://169.254.169.254/latest/meta-data/",
+    "AWS IMDSv2 Token": "http://169.254.169.254/latest/api/token",
+    "Azure IMDS": "http://169.254.169.254/metadata/instance?api-version=2021-02-01",
+    "GCP Metadata": "http://metadata.google.internal/computeMetadata/v1/",
+    "OCI Metadata": "http://169.254.169.254/opc/v2/instance/",
+    "Alibaba Cloud": "http://100.100.100.200/latest/meta-data/",
+    "DigitalOcean": "http://169.254.169.254/metadata/v1/",
+}
+
+# ─── Buckets S3 / Storage mal configurés ─────────────────────────────────────
+BUCKET_PERMUTATIONS = [
+    "{name}", "{name}-backup", "{name}-dev", "{name}-staging", "{name}-prod",
+    "{name}-data", "{name}-logs", "{name}-assets", "{name}-media",
+    "{name}-uploads", "{name}-files", "{name}-private", "{name}-public",
+    "{name}-archive", "{name}-temp", "{name}-static", "{name}-content",
+    "backup-{name}", "dev-{name}", "staging-{name}", "prod-{name}",
+    "{name}2024", "{name}2023", "{name}-db", "{name}-database",
+]
+
+# ─── Sous-domaines cloud typiques ─────────────────────────────────────────────
+CLOUD_SUBDOMAINS = [
+    "api", "admin", "portal", "console", "dashboard", "app",
+    "dev", "staging", "prod", "test", "internal", "backend",
+    "s3", "storage", "blob", "cdn", "static", "assets",
+    "mail", "smtp", "vpn", "ssh", "rdp", "jump",
+    "jenkins", "gitlab", "jira", "confluence", "sonar",
+    "grafana", "kibana", "prometheus", "elasticsearch",
+    "k8s", "kubernetes", "rancher", "docker",
+    "db", "database", "mysql", "postgres", "redis", "mongo",
+    "vault", "secrets", "config", "git", "code",
+]
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+def header(title: str):
+    print(f"\n{S.SEP2}")
+    print(f"  {C.GOLD}{C.BOLD}{title.upper()}{C.RESET}")
+    print(f"{S.SEP2}\n")
+
+def log(symbol, msg, detail=""):
+    ts = f"{C.GRAY}{datetime.now().strftime('%H:%M:%S')}{C.RESET}"
+    detail_str = f"  {C.GRAY}{detail}{C.RESET}" if detail else ""
+    print(f"  {ts}  {symbol}  {msg}{detail_str}")
+
+def save_result(outdir: str, filename: str, data):
+    path = os.path.join(outdir, filename)
+    with open(path, "w") as f:
+        if isinstance(data, (dict, list)):
+            json.dump(data, f, indent=2, default=str)
+        else:
+            f.write(str(data))
+    log(S.OK, f"Sauvegardé", path)
+
+# ─── Port Scanner ─────────────────────────────────────────────────────────────
+def scan_port(host: str, port: int, timeout: float = 1.0) -> dict:
+    result = {"port": port, "state": "closed", "service": CLOUD_PORTS.get(port, "unknown"), "banner": ""}
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        conn = sock.connect_ex((host, port))
+        if conn == 0:
+            result["state"] = "open"
+            try:
+                if port in [443, 8443, 636, 9200]:
+                    ctx = ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                    with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                        ssock.settimeout(0.5)
+                        try:
+                            banner = ssock.recv(256).decode(errors="replace").strip()
+                            result["banner"] = banner[:80]
+                        except Exception:
+                            pass
+                else:
+                    sock.settimeout(0.5)
+                    try:
+                        banner = sock.recv(256).decode(errors="replace").strip()
+                        result["banner"] = banner[:80]
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        sock.close()
+    except Exception:
+        pass
+    return result
+
+def cloud_port_scan(target: str, ports: Optional[list] = None, threads: int = 150, timeout: float = 1.0) -> list:
+    header("Port Scan — Énumération Cloud")
+    if ports is None:
+        ports = list(CLOUD_PORTS.keys())
+    log(S.INFO, f"Cible     : {C.TEAL}{target}{C.RESET}")
+    log(S.INFO, f"Ports     : {C.SILVER}{len(ports)} ports cloud spécifiques{C.RESET}")
+    log(S.INFO, f"Threads   : {C.SILVER}{threads}{C.RESET}")
+    log(S.INFO, f"Timeout   : {C.SILVER}{timeout}s{C.RESET}")
+    print()
+    open_ports = []
+    start = time.time()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as ex:
+        futures = {ex.submit(scan_port, target, p, timeout): p for p in ports}
+        done = 0
+        for fut in concurrent.futures.as_completed(futures):
+            done += 1
+            res = fut.result()
+            if res["state"] == "open":
+                open_ports.append(res)
+                svc = f"{C.GOLD}{res['service']}{C.RESET}"
+                banner = f"{C.GRAY}  ↳ {res['banner']}{C.RESET}" if res["banner"] else ""
+                print(f"  {S.FIND}  {C.GREEN}OPEN{C.RESET}  {C.WHITE}{str(res['port']).ljust(6)}{C.RESET}  {svc}{banner}")
+            pct = int(done / len(ports) * 50)
+            bar = f"{'█' * pct}{'░' * (50 - pct)}"
+            sys.stdout.write(f"\r  {C.GRAY}[{bar}] {done}/{len(ports)}{C.RESET}")
+            sys.stdout.flush()
+    elapsed = time.time() - start
+    print(f"\n\n{S.SEP}")
+    log(S.OK, f"{C.GREEN}{len(open_ports)} port(s) ouverts{C.RESET} trouvés en {elapsed:.1f}s")
+    return open_ports
+
+# ─── Metadata IMDS ────────────────────────────────────────────────────────────
+def check_metadata_endpoints(timeout: float = 2.0) -> dict:
+    header("Metadata IMDS — Détection Fournisseur Cloud")
+    results = {}
+    for name, url in METADATA_ENDPOINTS.items():
+        try:
+            req = urllib.request.Request(url)
+            if "Azure" in name:
+                req.add_header("Metadata", "true")
+            if "GCP" in name:
+                req.add_header("Metadata-Flavor", "Google")
+            if "IMDSv2" in name:
+                req.add_header("X-aws-ec2-metadata-token-ttl-seconds", "21600")
+                req.method = "PUT"
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = resp.read(512).decode(errors="replace")
+                results[name] = {"status": resp.status, "body": body[:200]}
+                log(S.FIND, f"{C.GOLD}{name}{C.RESET}", f"HTTP {resp.status} — {body[:60]}...")
+        except urllib.error.HTTPError as e:
+            results[name] = {"status": e.code, "error": str(e)}
+            log(S.WARN, f"{C.SILVER}{name}{C.RESET}", f"HTTP {e.code}")
+        except Exception as e:
+            results[name] = {"error": str(e)}
+            log(S.BULLET, f"{C.GRAY}{name}{C.RESET}", "Non accessible")
+    return results
+
+# ─── S3 Bucket Enumeration ────────────────────────────────────────────────────
+def enumerate_s3_buckets(name: str, region: str = "us-east-1") -> list:
+    header("S3 / Blob Storage — Enumération Buckets Publics")
+    log(S.INFO, f"Nom de base : {C.TEAL}{name}{C.RESET}")
+    found = []
+    permutations = [p.format(name=name) for p in BUCKET_PERMUTATIONS]
+    log(S.INFO, f"Permutations: {C.SILVER}{len(permutations)}{C.RESET}")
+    print()
+
+    def check_bucket(bucket_name):
+        endpoints = [
+            f"https://{bucket_name}.s3.amazonaws.com",
+            f"https://{bucket_name}.s3.{region}.amazonaws.com",
+            f"https://storage.googleapis.com/{bucket_name}",
+            f"https://{bucket_name}.blob.core.windows.net",
+        ]
+        for url in endpoints:
+            try:
+                req = urllib.request.Request(url, method="HEAD")
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    return {"bucket": bucket_name, "url": url, "status": resp.status,
+                            "headers": dict(resp.headers)}
+            except urllib.error.HTTPError as e:
+                if e.code == 403:
+                    return {"bucket": bucket_name, "url": url, "status": 403,
+                            "note": "Exists but private"}
+                elif e.code == 200:
+                    return {"bucket": bucket_name, "url": url, "status": 200, "note": "PUBLIC"}
+            except Exception:
+                pass
+        return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as ex:
+        futures = {ex.submit(check_bucket, b): b for b in permutations}
+        for fut in concurrent.futures.as_completed(futures):
+            res = fut.result()
+            if res:
+                found.append(res)
+                if res.get("status") == 403:
+                    log(S.WARN, f"{C.GOLD}{res['bucket']}{C.RESET}", f"Existe (privé) — {res['url']}")
+                elif res.get("status") == 200:
+                    log(S.FIND, f"{C.RED}PUBLIC{C.RESET} {C.WHITE}{res['bucket']}{C.RESET}", res["url"])
+                else:
+                    log(S.INFO, f"{C.SILVER}{res['bucket']}{C.RESET}", res["url"])
+
+    log(S.OK, f"{C.GREEN}{len(found)} bucket(s) détectés{C.RESET}")
+    return found
+
+# ─── Subdomain Enumeration ────────────────────────────────────────────────────
+def enumerate_subdomains(domain: str) -> list:
+    header("Sous-domaines Cloud — Énumération DNS")
+    log(S.INFO, f"Domaine : {C.TEAL}{domain}{C.RESET}")
+    log(S.INFO, f"Wordlist: {C.SILVER}{len(CLOUD_SUBDOMAINS)} sous-domaines cloud{C.RESET}")
+    print()
+    found = []
+
+    def resolve(sub):
+        fqdn = f"{sub}.{domain}"
+        try:
+            addrs = socket.getaddrinfo(fqdn, None)
+            ips = list({a[4][0] for a in addrs})
+            return {"subdomain": fqdn, "ips": ips}
+        except Exception:
+            return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=80) as ex:
+        futures = {ex.submit(resolve, s): s for s in CLOUD_SUBDOMAINS}
+        for fut in concurrent.futures.as_completed(futures):
+            res = fut.result()
+            if res:
+                found.append(res)
+                ips_str = ", ".join(res["ips"])
+                log(S.FIND, f"{C.GOLD}{res['subdomain']}{C.RESET}", f"{C.TEAL}{ips_str}{C.RESET}")
+
+    log(S.OK, f"{C.GREEN}{len(found)} sous-domaine(s) résolus{C.RESET}")
+    return found
+
+# ─── SSL/TLS Certificate Inspection ──────────────────────────────────────────
+def inspect_ssl(host: str, port: int = 443) -> dict:
+    header("Inspection Certificat SSL/TLS")
+    result = {}
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with socket.create_connection((host, port), timeout=5) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                cert = ssock.getpeercert()
+                cipher = ssock.cipher()
+                proto = ssock.version()
+                result = {
+                    "subject": dict(x[0] for x in cert.get("subject", [])),
+                    "issuer": dict(x[0] for x in cert.get("issuer", [])),
+                    "san": [v for t, v in cert.get("subjectAltName", [])],
+                    "not_before": cert.get("notBefore"),
+                    "not_after": cert.get("notAfter"),
+                    "protocol": proto,
+                    "cipher": cipher[0] if cipher else "unknown",
+                }
+                cn = result["subject"].get("commonName", "N/A")
+                log(S.FIND, f"CN         : {C.GOLD}{cn}{C.RESET}")
+                log(S.INFO, f"Protocole  : {C.TEAL}{proto}{C.RESET}")
+                log(S.INFO, f"Cipher     : {C.SILVER}{result['cipher']}{C.RESET}")
+                log(S.INFO, f"Expiration : {C.SILVER}{result['not_after']}{C.RESET}")
+                if result["san"]:
+                    log(S.INFO, f"SANs ({len(result['san'])}) :", "")
+                    for san in result["san"][:10]:
+                        print(f"    {S.BULLET} {C.TEAL}{san}{C.RESET}")
+    except Exception as e:
+        log(S.ERR, f"Erreur SSL", str(e))
+    return result
+
+# ─── Cloud Provider Detection ─────────────────────────────────────────────────
+def detect_cloud_provider(ip: str) -> str:
+    header("Détection Fournisseur Cloud")
+    log(S.INFO, f"IP : {C.TEAL}{ip}{C.RESET}")
+
+    # Plages IP connues (simplifiées)
+    aws_prefixes = ["3.", "13.", "15.", "18.", "34.", "35.", "52.", "54.", "99.", "100."]
+    azure_prefixes = ["20.", "40.", "51.", "52.", "104.", "137.", "138.", "157."]
+    gcp_prefixes = ["34.", "35.", "104.", "130.", "142.", "146.", "209."]
+
+    first_octet_prefix = ".".join(ip.split(".")[:2]) + "."
+    first = ip.split(".")[0] + "."
+
+    provider = "Unknown"
+    if any(ip.startswith(p) for p in aws_prefixes):
+        provider = "AWS (Amazon Web Services)"
+    elif any(ip.startswith(p) for p in azure_prefixes):
+        provider = "Azure (Microsoft)"
+    elif any(ip.startswith(p) for p in gcp_prefixes):
+        provider = "GCP (Google Cloud Platform)"
+
+    # Reverse DNS
+    try:
+        rdns = socket.gethostbyaddr(ip)[0]
+        log(S.FIND, f"rDNS       : {C.GOLD}{rdns}{C.RESET}")
+        if "amazonaws" in rdns or "aws" in rdns:
+            provider = "AWS (Amazon Web Services)"
+        elif "azure" in rdns or "microsoft" in rdns:
+            provider = "Azure (Microsoft)"
+        elif "google" in rdns or "gcp" in rdns:
+            provider = "GCP (Google Cloud Platform)"
+        elif "digitalocean" in rdns:
+            provider = "DigitalOcean"
+        elif "linode" in rdns:
+            provider = "Linode (Akamai)"
+        elif "vultr" in rdns:
+            provider = "Vultr"
+        elif "hetzner" in rdns:
+            provider = "Hetzner"
+        elif "ovh" in rdns:
+            provider = "OVH"
+    except Exception:
+        log(S.WARN, "Pas de reverse DNS")
+
+    color = C.ORANGE if provider != "Unknown" else C.GRAY
+    log(S.OK, f"Fournisseur: {color}{provider}{C.RESET}")
+    return provider
+
+# ─── HTTP Headers Analysis ────────────────────────────────────────────────────
+def analyze_http_headers(host: str, port: int = 443, use_ssl: bool = True) -> dict:
+    header("Analyse Headers HTTP — Fingerprinting")
+    results = {}
+    paths = ["/", "/api", "/admin", "/health", "/status", "/v1", "/.well-known/security.txt"]
+    proto = "https" if use_ssl else "http"
+    for path in paths:
+        url = f"{proto}://{host}:{port}{path}"
+        try:
+            req = urllib.request.Request(url)
+            req.add_header("User-Agent", "Agodjie/1.0 Cloud-Scanner")
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            with urllib.request.urlopen(req, context=ctx, timeout=3) as resp:
+                headers = dict(resp.headers)
+                results[path] = {"status": resp.status, "headers": headers}
+                log(S.FIND, f"{C.GOLD}HTTP {resp.status}{C.RESET}  {C.TEAL}{path}{C.RESET}")
+                interesting = ["Server", "X-Powered-By", "X-Cloud-Trace-Id",
+                               "X-Amzn-RequestId", "X-Azure-Ref", "Via",
+                               "X-Frame-Options", "Content-Security-Policy",
+                               "Strict-Transport-Security", "X-Content-Type-Options"]
+                for h in interesting:
+                    if h in headers:
+                        log(S.INFO, f"  {h}: {C.SILVER}{headers[h][:80]}{C.RESET}")
+        except Exception as e:
+            log(S.BULLET, f"{C.GRAY}{path}{C.RESET}", str(e)[:60])
+    return results
+
+# ─── DNS Records ──────────────────────────────────────────────────────────────
+def enum_dns_records(domain: str) -> dict:
+    header("Énumération DNS — Records Cloud")
+    records = {}
+    record_types = ["A", "AAAA", "MX", "TXT", "NS", "CNAME", "SOA", "PTR"]
+    for rtype in record_types:
+        try:
+            cmd = ["dig", "+short", rtype, domain]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            if result.stdout.strip():
+                lines = [l for l in result.stdout.strip().split("\n") if l]
+                records[rtype] = lines
+                log(S.FIND, f"{C.GOLD}{rtype.ljust(6)}{C.RESET}", "")
+                for line in lines:
+                    print(f"    {S.ARROW} {C.TEAL}{line}{C.RESET}")
+                if rtype == "TXT":
+                    for txt in lines:
+                        if "v=spf1" in txt:
+                            log(S.INFO, "SPF record détecté", txt[:80])
+                        if "google-site-verification" in txt:
+                            log(S.WARN, "Google Workspace détecté")
+                        if "MS=" in txt:
+                            log(S.WARN, "Microsoft 365 / Azure AD détecté")
+                        if "amazonses" in txt:
+                            log(S.WARN, "Amazon SES détecté")
+        except Exception as e:
+            log(S.BULLET, f"{C.GRAY}{rtype}{C.RESET}", str(e)[:40])
+    return records
+
+# ─── Génération du rapport ─────────────────────────────────────────────────────
+def generate_report(results: dict, outdir: str, target: str):
+    header("Génération du Rapport")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # JSON
+    json_path = os.path.join(outdir, f"agodjie_report_{ts}.json")
+    with open(json_path, "w") as f:
+        json.dump(results, f, indent=2, default=str)
+    log(S.OK, f"JSON   : {C.TEAL}{json_path}{C.RESET}")
+
+    # Markdown
+    md_path = os.path.join(outdir, f"agodjie_report_{ts}.md")
+    with open(md_path, "w") as f:
+        f.write(f"# AGODJIÉ — Rapport d'Énumération Cloud\n\n")
+        f.write(f"- **Cible**    : `{target}`\n")
+        f.write(f"- **Date**     : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"- **Auteur**   : @T3RRIFI3R\n\n")
+        f.write("---\n\n")
+        for section, data in results.items():
+            f.write(f"## {section}\n\n")
+            f.write(f"```json\n{json.dumps(data, indent=2, default=str)}\n```\n\n")
+    log(S.OK, f"Markdown: {C.TEAL}{md_path}{C.RESET}")
+
+    # Résumé terminal
+    print(f"\n{S.SEP2}")
+    print(f"  {C.GOLD}{C.BOLD}RÉSUMÉ EXÉCUTIF{C.RESET}")
+    print(f"{S.SEP2}\n")
+    if "ports" in results:
+        open_p = [p for p in results["ports"] if p.get("state") == "open"]
+        log(S.OK, f"{C.GREEN}{len(open_p)} port(s) ouverts{C.RESET}")
+        for p in open_p:
+            print(f"    {S.ARROW} {C.WHITE}{p['port']}/TCP{C.RESET}  {C.GOLD}{p['service']}{C.RESET}")
+    if "subdomains" in results and results["subdomains"]:
+        log(S.OK, f"{C.GREEN}{len(results['subdomains'])} sous-domaine(s) découverts{C.RESET}")
+    if "buckets" in results and results["buckets"]:
+        public = [b for b in results["buckets"] if b.get("status") == 200]
+        log(S.WARN if public else S.INFO,
+            f"{C.RED if public else C.SILVER}{len(public)} bucket(s) public(s){C.RESET} "
+            f"sur {len(results['buckets'])} détectés")
+    print()
+
+# ─── CLI ─────────────────────────────────────────────────────────────────────
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="agodjie",
+        description="AGODJIÉ — Cloud Enumeration Scanner by @T3RRIFI3R",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    p.add_argument("target", help="IP, CIDR, ou domaine cible")
+    p.add_argument("-m", "--modules", nargs="+",
+                   choices=["ports", "metadata", "ssl", "headers", "dns", "subdomains", "buckets", "all"],
+                   default=["all"], help="Modules à exécuter")
+    p.add_argument("-o", "--output", default="./agodjie_output", help="Répertoire de sortie")
+    p.add_argument("-t", "--threads", type=int, default=150, help="Nombre de threads (défaut: 150)")
+    p.add_argument("--timeout", type=float, default=1.0, help="Timeout socket (défaut: 1.0s)")
+    p.add_argument("--region", default="us-east-1", help="Région AWS pour les buckets")
+    p.add_argument("--bucket-name", help="Nom de base pour l'énumération des buckets")
+    p.add_argument("--port", type=int, default=443, help="Port pour SSL/HTTP (défaut: 443)")
+    p.add_argument("-q", "--quiet", action="store_true", help="Mode silencieux")
+    p.add_argument("--no-banner", action="store_true", help="Masquer le banner")
+    return p
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+
+    if not args.no_banner:
+        print(BANNER)
+
+    # Créer le répertoire de sortie
+    os.makedirs(args.output, exist_ok=True)
+
+    target = args.target
+    modules = args.modules
+    run_all = "all" in modules
+
+    results = {"target": target, "timestamp": datetime.now().isoformat()}
+
+    # Résolution IP si domaine
+    target_ip = target
+    target_domain = None
+    try:
+        ipaddress.ip_address(target)
+    except ValueError:
+        target_domain = target
+        try:
+            target_ip = socket.gethostbyname(target)
+            log(S.INFO, f"Résolution DNS : {C.TEAL}{target}{C.RESET} → {C.GOLD}{target_ip}{C.RESET}")
+        except Exception as e:
+            log(S.WARN, f"Impossible de résoudre {target}", str(e))
+
+    # ── Détection provider ──
+    if run_all or "ports" in modules:
+        results["provider"] = detect_cloud_provider(target_ip)
+
+    # ── Port scan ──
+    if run_all or "ports" in modules:
+        results["ports"] = cloud_port_scan(target_ip, threads=args.threads, timeout=args.timeout)
+
+    # ── Metadata IMDS ──
+    if run_all or "metadata" in modules:
+        results["metadata"] = check_metadata_endpoints(timeout=args.timeout * 2)
+
+    # ── SSL ──
+    if run_all or "ssl" in modules:
+        results["ssl"] = inspect_ssl(target, port=args.port)
+
+    # ── HTTP Headers ──
+    if run_all or "headers" in modules:
+        results["headers"] = analyze_http_headers(target, port=args.port)
+
+    # ── DNS ──
+    if target_domain and (run_all or "dns" in modules):
+        results["dns"] = enum_dns_records(target_domain)
+
+    # ── Subdomains ──
+    if target_domain and (run_all or "subdomains" in modules):
+        results["subdomains"] = enumerate_subdomains(target_domain)
+
+    # ── Buckets ──
+    if run_all or "buckets" in modules:
+        bucket_name = args.bucket_name or (target_domain.split(".")[0] if target_domain else target_ip.replace(".", "-"))
+        results["buckets"] = enumerate_s3_buckets(bucket_name, region=args.region)
+
+    # ── Rapport ──
+    generate_report(results, args.output, target)
+
+    print(f"\n  {C.GOLD}Agodjié terminé. Guerrières du Dahomey, mission accomplie.{C.RESET}\n")
+
+if __name__ == "__main__":
+    main()
 
