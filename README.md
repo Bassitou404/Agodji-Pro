@@ -8,10 +8,7 @@
 ```
 
 </div>
----
 
----
-Fonctionnalités
 
 ---
 Installation
